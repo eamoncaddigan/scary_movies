@@ -10,4 +10,5 @@ budgetData <- read_excel("scary_movies.xlsx", sheet = 1) %>%
            movie_financial_summary_international_box_office,
          multiple = total_gross / budget) %>%
   group_by(genre) %>%
-  mutate(percent_by_genre = 100 * cume_dist(-multiple))
+  mutate(percent_by_genre = 100 * cume_dist(-multiple)) %>%
+  ungroup()
