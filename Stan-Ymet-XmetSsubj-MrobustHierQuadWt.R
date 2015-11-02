@@ -12,11 +12,11 @@ genMCMC = function( data , xName="x" , yName="y" , sName="s" , wName=NULL ,
   require(rstan)
   #-----------------------------------------------------------------------------
   # THE DATA.
-  y = data[,yName]
-  x = data[,xName]
-  s = as.numeric(data[,sName])
+  y = data[[yName]]
+  x = data[[xName]]
+  s = as.numeric(as.factor(data[[sName]]))
   if ( !is.null(wName) ) {
-    w = data[,wName]
+    w = data[[wName]]
   } else {
     w = rep(1,length(y))
   }
@@ -69,53 +69,43 @@ genMCMC = function( data , xName="x" , yName="y" , sName="s" , wName=NULL ,
   parameters {
     real zbeta0[Nsubj] ;
     real zbeta1[Nsubj] ;
-    real zbeta2[Nsubj] ;
     real<lower=0> zsigma ;
     real zbeta0mu ; 
     real zbeta1mu ; 
-    real zbeta2mu ; 
     real<lower=0> zbeta0sigma ;
     real<lower=0> zbeta1sigma ;
-    real<lower=0> zbeta2sigma ;
     real<lower=0> nuMinusOne ;
   }
   transformed parameters {
     real<lower=0> nu ;
     real beta0[Nsubj] ;
     real beta1[Nsubj] ;
-    real beta2[Nsubj] ;
     real<lower=0> sigma ;
     real beta0mu ; 
     real beta1mu ; 
-    real beta2mu ; 
     nu <- nuMinusOne+1 ;
     // Transform to original scale:
     for ( j in 1:Nsubj ) { // could be vectorized...?
-      beta2[j] <- zbeta2[j]*ysd/square(xsd) ;
-      beta1[j] <- zbeta1[j]*ysd/xsd - 2*zbeta2[j]*xm*ysd/square(xsd) ;
-      beta0[j] <- zbeta0[j]*ysd  + ym - zbeta1[j]*xm*ysd/xsd + zbeta2[j]*square(xm)*ysd/square(xsd) ;
+      beta1[j] <- zbeta1[j]*ysd/xsd ;
+      beta0[j] <- zbeta0[j]*ysd  + ym - zbeta1[j]*xm*ysd/xsd ;
     }
-    beta2mu <- zbeta2mu*ysd/square(xsd) ;
-    beta1mu <- zbeta1mu*ysd/xsd - 2*zbeta2mu*xm*ysd/square(xsd) ;
-    beta0mu <- zbeta0mu*ysd  + ym - zbeta1mu*xm*ysd/xsd + zbeta2mu*square(xm)*ysd/square(xsd) ;
+    beta1mu <- zbeta1mu*ysd/xsd ;
+    beta0mu <- zbeta0mu*ysd  + ym - zbeta1mu*xm*ysd/xsd ;
     sigma <- zsigma * ysd ;
   } 
   model {
     zbeta0mu ~ normal( 0 , 10 ) ;
     zbeta1mu ~ normal( 0 , 10 ) ;
-    zbeta2mu ~ normal( 0 , 10 ) ;
     zsigma ~ uniform( 1.0E-3 , 1.0E+3 ) ;
     zbeta0sigma ~ uniform( 1.0E-3 , 1.0E+3 ) ;
     zbeta1sigma ~ uniform( 1.0E-3 , 1.0E+3 ) ;
-    zbeta2sigma ~ uniform( 1.0E-3 , 1.0E+3 ) ;
     nuMinusOne ~ exponential(1/29.0) ;
     zbeta0 ~ normal( zbeta0mu , zbeta0sigma ) ; // vectorized
     zbeta1 ~ normal( zbeta1mu , zbeta1sigma ) ; // vectorized
-    zbeta2 ~ normal( zbeta2mu , zbeta2sigma ) ; // vectorized
     for ( i in 1:Ntotal ) {
       zy[i] ~ student_t( 
                 nu ,
-                zbeta0[s[i]] + zbeta1[s[i]] * zx[i] + zbeta2[s[i]] * square(zx[i]) , 
+                zbeta0[s[i]] + zbeta1[s[i]] * zx[i] , 
                 zw[i]*zsigma ) ;
     }
   }  
@@ -131,12 +121,10 @@ genMCMC = function( data , xName="x" , yName="y" , sName="s" , wName=NULL ,
   # N.B. THIS DOES NOT ALWAYS WORK AND DOES NOT ALWAYS IMPROVE THE MCMC SAMPLE.
   # IF IT'S A PROBLEM, COMMENT OUT THE inits ARGUMENT IN THE run.jags COMMAND.
   zx = ( x - mean(x) ) / sd(x)
-  zxsq = zx^2
   zy = ( y - mean(y) ) / sd(y)
-  lmInfo = lm( zy ~ zx + zxsq )
+  lmInfo = lm( zy ~ zx )
   b0init = lmInfo$coef[1]
   b1init = lmInfo$coef[2]
-  b2init = lmInfo$coef[3]
   sigmaInit = sqrt(mean(lmInfo$res^2))
   nuInit = 10 # arbitrary
   initsList = list(
@@ -144,20 +132,18 @@ genMCMC = function( data , xName="x" , yName="y" , sName="s" , wName=NULL ,
     nu=nuInit ,
     zbeta0mu=b0init ,
     zbeta1mu=b1init ,
-    zbeta2mu=b2init ,
     zbeta0=rep(b0init,max(s)) ,
-    zbeta1=rep(b1init,max(s)) ,
-    zbeta2=rep(b2init,max(s)) # other params filled in by JAGS
+    zbeta1=rep(b1init,max(s)) # other params filled in by JAGS
   )
   
   #-----------------------------------------------------------------------------
   # RUN THE CHAINS
-  parameters = c( "beta0" ,  "beta1" ,  "beta2" ,
-                  "beta0mu" , "beta1mu" , "beta2mu" ,
-                  "zbeta0" , "zbeta1" , "zbeta2" ,
-                  "zbeta0mu" , "zbeta1mu" , "zbeta2mu" ,
+  parameters = c( "beta0" ,  "beta1" , 
+                  "beta0mu" , "beta1mu" , 
+                  "zbeta0" , "zbeta1" , 
+                  "zbeta0mu" , "zbeta1mu" , 
                   "sigma" , "nu" , 
-                  "zsigma", "zbeta0sigma" , "zbeta1sigma", "zbeta2sigma" )
+                  "zsigma", "zbeta0sigma" , "zbeta1sigma" )
   adaptSteps = 1000  # Number of steps to "tune" the samplers
   burnInSteps = 2000 
   nChains = 3 
@@ -220,18 +206,16 @@ plotMCMC = function( codaSamples , data ,
   # pairsPlot is TRUE or FALSE and indicates whether scatterplots of pairs
   #   of parameters should be displayed.
   #-----------------------------------------------------------------------------
-  y = data[,yName]
-  x = data[,xName]
-  s = factor(data[,sName])
+  y = data[[yName]]
+  x = data[[xName]]
+  s = factor(data[[sName]])
   nSubj = length(unique(s)) # should be same as max(s)
   mcmcMat = as.matrix(codaSamples,chains=TRUE)
   chainLength = NROW( mcmcMat )
   beta0mu = mcmcMat[,"beta0mu"]
   beta1mu = mcmcMat[,"beta1mu"]
-  beta2mu = mcmcMat[,"beta2mu"]
   zbeta0mu = mcmcMat[,"zbeta0mu"]
   zbeta1mu = mcmcMat[,"zbeta1mu"]
-  zbeta2mu = mcmcMat[,"zbeta2mu"]
   sigma = mcmcMat[,"sigma"]
   nu = mcmcMat[,"nu"]
   log10nu = log10(nu)
@@ -250,9 +234,8 @@ plotMCMC = function( codaSamples , data ,
       if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
       text(0.5, 0.5, txt, cex=1.25 ) # was cex=cex.cor*r
     }
-    pairs( cbind( beta0mu , beta1mu , beta2mu , sigma , log10nu )[plotIdx,] ,
+    pairs( cbind( beta0mu , beta1mu , sigma , log10nu )[plotIdx,] ,
            labels=c( expression(mu[beta*0]) , expression(mu[beta*1]) , 
-                     expression(mu[beta*2]) , 
                      expression(sigma) ,  expression(log10(nu)) ) , 
            lower.panel=panel.cor , col="skyblue" )
     if ( !is.null(saveName) ) {
@@ -273,18 +256,12 @@ plotMCMC = function( codaSamples , data ,
   histInfo = plotPost( beta1mu , cex.lab = 1.75 , showCurve=showCurve ,
                        compVal=compValBeta1 , ROPE=ropeBeta1 ,
                        xlab=bquote(mu[beta*1]) , main=paste("Slope, Group Level") )
-  histInfo = plotPost( beta2mu , cex.lab = 1.75 , showCurve=showCurve ,
-                       #compVal=compValBeta1 , ROPE=ropeBeta1 ,
-                       xlab=bquote(mu[beta*2]) , main=paste("Quad, Group Level") )
   histInfo = plotPost( zbeta0mu , cex.lab = 1.75 , showCurve=showCurve ,
                        #compVal=compValBeta0 , ROPE=ropeBeta0 ,
                        xlab=bquote(zmu[beta*0]) , main=paste("Intercept, Group Level") )
   histInfo = plotPost( zbeta1mu , cex.lab = 1.75 , showCurve=showCurve ,
                        #compVal=compValBeta1 , ROPE=ropeBeta1 ,
                        xlab=bquote(zmu[beta*1]) , main=paste("Slope, Group Level") )
-  histInfo = plotPost( zbeta2mu , cex.lab = 1.75 , showCurve=showCurve ,
-                       #compVal=compValBeta1 , ROPE=ropeBeta1 ,
-                       xlab=bquote(zmu[beta*2]) , main=paste("Quad, Group Level") )
   #plot( beta1mu[plotIdx] , beta0mu[plotIdx] , 
   #      xlab=bquote(mu[beta*1]) , ylab=bquote(mu[beta*0]) ,
   #      col="skyblue" , cex.lab = 1.75 )
@@ -328,8 +305,7 @@ plotMCMC = function( codaSamples , data ,
       for ( i in floor(seq(1,chainLength,length=nPredCurves)) ) {
         b0 = mcmcMat[i,paste0("beta0[",sIdx,"]")]
         b1 = mcmcMat[i,paste0("beta1[",sIdx,"]")]
-        b2 = mcmcMat[i,paste0("beta2[",sIdx,"]")]
-        lines( xComb , b0+b1*xComb+b2*xComb^2 , col="skyblue" )
+        lines( xComb , b0+b1*xComb, col="skyblue" )
       }
       points( x[thisSrows] , y[thisSrows] , pch=19 )
     }
@@ -358,8 +334,7 @@ plotMCMC = function( codaSamples , data ,
   for ( i in floor(seq(1,chainLength,length=nPredCurves)) ) {
     b0 = mcmcMat[i,paste0("beta0mu")]
     b1 = mcmcMat[i,paste0("beta1mu")]
-    b2 = mcmcMat[i,paste0("beta2mu")]
-    lines( xComb , b0+b1*xComb+b2*xComb^2 , col="skyblue" )
+    lines( xComb , b0+b1*xComb , col="skyblue" )
   }
   for ( sIdx in 1:nSubj ) {
     thisSrows = (as.numeric(s)==sIdx)
